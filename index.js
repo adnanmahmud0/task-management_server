@@ -6,6 +6,7 @@ const { ObjectId } = require('mongodb');
 const { MongoClient, ServerApiVersion } = require('mongodb');
 const http = require('http');
 const { Server } = require('socket.io');
+const User = require('./models/User'); // Import the User model
 
 const port = process.env.PORT || 3000;
 
@@ -118,6 +119,29 @@ async function run() {
             } catch (error) {
                 console.error('Error deleting task:', error);
                 res.status(500).json({ error: 'Internal server error' });
+            }
+        });
+
+
+        // Endpoint to save user details
+        app.post('/api/saveUserDetails', async (req, res) => {
+            const { userId, email, name } = req.body;
+
+            try {
+                // Check if user already exists
+                let user = await User.findOne({ email });
+                if (!user) {
+                    // Save new user details
+                    user = new User({
+                        userId,
+                        email,
+                        name,
+                    });
+                    await user.save();
+                }
+                res.status(200).json({ message: 'User details saved successfully' });
+            } catch (error) {
+                res.status(500).json({ message: 'Failed to save user details', error: error.message });
             }
         });
 

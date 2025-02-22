@@ -62,10 +62,10 @@ async function run() {
             }
         });
 
-        // GET - Get all tasks
         app.get('/tasks', async (req, res) => {
+            const userEmail = req.query.email;
             try {
-                const data = tasks.find();
+                const data = tasks.find({ email: userEmail }); // Filter by email
                 const result = await data.toArray();
                 res.json(result);
             } catch (error) {
@@ -73,6 +73,7 @@ async function run() {
                 res.status(500).json({ error: 'Internal server error' });
             }
         });
+
 
         // PUT - Update a task
         app.put('/tasks/:id', async (req, res) => {

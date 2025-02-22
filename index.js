@@ -1,21 +1,28 @@
 const express = require('express');
 const cors = require('cors');
 const app = express();
-const port = process.env.PORT || 3000;
+require('dotenv').config();
+const { ObjectId } = require('mongodb');
 const { MongoClient, ServerApiVersion } = require('mongodb');
+const http = require('http');
+const { Server } = require('socket.io');
+
+const port = process.env.PORT || 3000;
+
+// Create an HTTP server and set up Socket.IO
+const server = http.createServer(app);
+const io = new Server(server, {
+    cors: {
+        origin: '*', // Allow all origins for development. Adjust in production.
+        methods: ['GET', 'POST', 'PUT', 'DELETE']
+    }
+});
 
 app.use(cors());
 app.use(express.json());
 
-
-//DB_USER = task_management
-//DB_PASSWORD = qTZg3xsbwbvAeHHZ
-
-
-
 const uri = `mongodb+srv://${process.env.DB_USER}:${process.env.DB_PASSWORD}@adnan.f8a3c.mongodb.net/?retryWrites=true&w=majority&appName=adnan`;
 
-// Create a MongoClient with a MongoClientOptions object to set the Stable API version
 const client = new MongoClient(uri, {
     serverApi: {
         version: ServerApiVersion.v1,
@@ -26,54 +33,114 @@ const client = new MongoClient(uri, {
 
 async function run() {
     try {
-        // Connect the client to the server	(optional starting in v4.7)
-        await client.connect();
-        // Send a ping to confirm a successful connection
+        // await client.connect();
         await client.db("admin").command({ ping: 1 });
-        
         console.log("Pinged your deployment. You successfully connected to MongoDB!");
 
         const tasks = client.db("task_management").collection("task");
 
+        // Change Streams for Real-Time Updates
+        const changeStream = tasks.watch();
+        changeStream.on('change', async (change) => {
+
+            if (change.operationType === 'update') {
+                const updatedTask = await tasks.findOne({ _id: new ObjectId(change.documentKey._id) });
+                io.emit('taskUpdated', updatedTask); // Emit the updated task to all clients
+            }
+        });
+
+
+        // POST - Add a task
         app.post('/tasks', async (req, res) => {
-            const task = req.body;
-            const result = await tasks.insertOne(task);
-            res.json(result);
-        })
+            try {
+                const task = req.body;
+                const result = await tasks.insertOne(task);
+                res.json(result);
+            } catch (error) {
+                console.error('Error adding task:', error);
+                res.status(500).json({ error: 'Internal server error' });
+            }
+        });
 
+        // GET - Get all tasks
         app.get('/tasks', async (req, res) => {
-            const tasks = task.find();
-            const result = await tasks.toArray();
-            res.json(result);
-        })
+            try {
+                const data = tasks.find();
+                const result = await data.toArray();
+                res.json(result);
+            } catch (error) {
+                console.error('Error fetching tasks:', error);
+                res.status(500).json({ error: 'Internal server error' });
+            }
+        });
 
+        // PUT - Update a task
         app.put('/tasks/:id', async (req, res) => {
-            const id = req.params.id;
-            const task = req.body;
+            try {
+                const { id } = req.params;
+                const updateData = req.body;
+                delete updateData._id;
 
-            const result = await tasks.replaceOne({ _id: id }, task);
-            res.json(result);
-        })
+                const result = await tasks.updateOne(
+                    { _id: new ObjectId(id) },
+                    { $set: updateData }
+                );
 
+                if (result.matchedCount === 0) {
+                    return res.status(404).json({ error: 'Task not found' });
+                }
+
+                // Emit updated task data
+                const updatedTask = await tasks.findOne({ _id: new ObjectId(id) });
+                io.emit('taskUpdated', updatedTask);
+
+                res.json(updatedTask);
+            } catch (error) {
+                console.error('Error updating task:', error);
+                res.status(500).json({ error: 'Internal server error' });
+            }
+        });
+
+
+        // DELETE - Delete a task
         app.delete('/tasks/:id', async (req, res) => {
-            const id = req.params.id;
-            const result = await tasks.deleteOne({ _id: id });
-            res.json(result);
-        })
+            try {
+                const id = req.params.id;
+                const filter = { _id: new ObjectId(id) };
+                const result = await tasks.deleteOne(filter);
 
+                if (result.deletedCount === 0) {
+                    return res.status(404).json({ error: 'Task not found' });
+                }
+
+                res.json({ message: 'Task deleted successfully' });
+            } catch (error) {
+                console.error('Error deleting task:', error);
+                res.status(500).json({ error: 'Internal server error' });
+            }
+        });
 
     } finally {
-        // Ensures that the client will close when you finish/error
+        // Uncomment to close the client when needed
         // await client.close();
     }
 }
 run().catch(console.dir);
 
+// Socket.IO Connection
+io.on('connection', (socket) => {
+    console.log('A user connected:', socket.id);
+
+    socket.on('disconnect', () => {
+        console.log('User disconnected:', socket.id);
+    });
+});
 
 app.get('/', (req, res) => {
     res.send('Task management server is online');
-})
+});
 
-app.listen(port, () => {
+// Use server.listen instead of app.listen
+server.listen(port, () => {
     console.log(`Server is running on port ${port}`);
-})
+});
